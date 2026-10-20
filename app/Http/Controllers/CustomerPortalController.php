@@ -344,7 +344,7 @@ class CustomerPortalController extends Controller
 
     private function notifyAdmins(string $title, string $body, string $url, array $data): void
     {
-        $adminIds = DB::table('users')->where('role', 'Super Admin')->where('status', 'Aktif')->pluck('id');
+        $adminIds = DB::table('users')->where('role', 'Admin')->where('status', 'Aktif')->pluck('id');
         foreach ($adminIds as $adminId) {
             DB::table('notifications')->insert([
                 'user_id' => $adminId,

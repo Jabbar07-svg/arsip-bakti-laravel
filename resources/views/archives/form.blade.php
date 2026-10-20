@@ -93,7 +93,7 @@
                         <option value="{{ $classification }}" @selected(old('classification', $archive->classification ?? 'Internal') === $classification)>{{ $classification }}</option>
                     @endforeach
                 </select>
-                <small>Dokumen Rahasia hanya dapat diatur oleh Super Admin.</small>
+                <small>Dokumen Rahasia hanya dapat diatur oleh Admin.</small>
                 @error('classification')<p class="form-error">{{ $message }}</p>@enderror
             </div>
             <div class="field" id="division-field">
@@ -136,14 +136,16 @@
                 @error('keterangan')<p class="form-error">{{ $message }}</p>@enderror
             </div>
             <div class="field field-full">
-                <label for="file">Lampiran Digital <span class="optional">Opsional</span></label>
-                <input id="file" type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" data-file-preview-input>
-                <small>PDF, JPG, PNG, DOC, DOCX, XLS, atau XLSX · Maks. 10 MB. Lampiran disimpan terpisah dari QR.</small>
+                <label for="files">Lampiran Digital (Opsional)</label>
+                <input id="files" type="file" name="files[]" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx" multiple data-file-preview-input>
+                <small>Unggah salinan digital atau dokumen pendukung jika diperlukan. Bagian ini boleh dikosongkan. PDF, DOC, DOCX, XLS, XLSX, JPG, atau PNG · Maks. 10 MB per file.</small>
                 <div class="file-preview" data-file-preview hidden>
                     <span><strong data-file-name></strong><br><span data-file-size></span></span>
                     <button type="button" data-file-clear>Hapus pilihan</button>
                 </div>
                 @error('file')<p class="form-error">{{ $message }}</p>@enderror
+                @error('files')<p class="form-error">{{ $message }}</p>@enderror
+                @error('files.*')<p class="form-error">{{ $message }}</p>@enderror
             </div>
         </div>
         <div class="form-actions">

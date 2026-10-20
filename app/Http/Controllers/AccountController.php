@@ -21,8 +21,11 @@ class AccountController extends Controller
             ->orderByDesc('created_at')
             ->limit(20)
             ->get();
+        $authMethod = $request->session()->get('auth_method', config('ldap.auth_mode'));
+        $ldapProfile = $authMethod === 'ldap' ? $request->session()->get('ldap_profile', []) : [];
+        $accountEmail = is_array($ldapProfile) ? ($ldapProfile['email'] ?? null) : null;
 
-        return view('account.show', compact('notifications'));
+        return view('account.show', compact('notifications', 'authMethod', 'accountEmail', 'ldapProfile'));
     }
 
     public function updateProfile(Request $request): RedirectResponse
@@ -73,6 +76,8 @@ class AccountController extends Controller
 
     public function updatePassword(Request $request): RedirectResponse
     {
+        abort_unless(config('ldap.auth_mode') === 'local', 403, 'Password akun direktori dikelola oleh administrator BAKTI/Komdigi.');
+
         $validated = $request->validate([
             'current_password' => ['required', 'string'],
             'password' => ['required', 'string', 'min:8', 'confirmed'],

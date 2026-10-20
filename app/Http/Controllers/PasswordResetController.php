@@ -13,6 +13,8 @@ class PasswordResetController extends Controller
 {
     public function create(string $token): View
     {
+        abort_unless(config('ldap.auth_mode') === 'local', 404);
+
         $record = $this->findValidReset($token);
         abort_if($record === null, 404, 'Tautan reset tidak valid atau sudah kedaluwarsa.');
 
@@ -21,6 +23,8 @@ class PasswordResetController extends Controller
 
     public function store(Request $request, string $token): RedirectResponse
     {
+        abort_unless(config('ldap.auth_mode') === 'local', 404);
+
         $validated = $request->validate([
             'password' => ['required', 'string', 'min:8', 'max:255', 'confirmed'],
         ]);

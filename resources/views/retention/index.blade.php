@@ -10,18 +10,18 @@
 
     <section class="panel retention-section" id="schedule">
         <div class="panel-heading"><div><h2>Aturan JRA per kategori</h2><p>Masukkan durasi sesuai kebijakan organisasi. Sistem tidak menetapkan retensi otomatis.</p></div></div>
-        @if ($isSuperAdmin)
+        @if ($isAdmin)
             <form class="retention-form" method="post" action="{{ route('retention.schedule') }}">
                 @csrf
                 <label>Kategori<select name="kategori_id" required><option value="">Pilih kategori</option>@foreach ($categories as $category)<option value="{{ $category->id }}">{{ $category->nama_kategori }}</option>@endforeach</select></label>
                 <label>Masa aktif (bulan)<input type="number" name="active_months" min="0" max="65535" required></label>
                 <label>Masa inaktif (bulan)<input type="number" name="inactive_months" min="0" max="65535" required></label>
-                <label>Nasib akhir<select name="final_action" required><option value="">Pilih tindakan</option>@foreach ($finalActions as $action)<option value="{{ $action }}">{{ $action }}</option>@endforeach</select></label>
+                <label>Nasib akhir<select name="final_action" required><option value="">Pilih tindakan</option>@foreach ($finalActions as $action)<option value="{{ $action }}">{{ ['Musnahkan' => 'Pemusnahan', 'Pindahkan Arsip Inaktif' => 'Pemindahan arsip inaktif', 'Permanen' => 'Simpan sebagai arsip permanen', 'Serah ke ANRI' => 'Serahkan ke ANRI'][$action] }}</option>@endforeach</select></label>
                 <label>Pengingat (hari)<input type="number" name="alert_days" min="0" max="3650" value="90" required></label>
                 <button class="button button-primary" type="submit">Simpan JRA</button>
             </form>
         @else
-            <p class="retention-muted">Hanya Super Admin yang dapat mengubah jadwal retensi.</p>
+            <p class="retention-muted">Hanya Admin yang dapat mengubah jadwal retensi.</p>
         @endif
         <div class="retention-schedule-list">
             @forelse ($schedules as $schedule)
@@ -40,8 +40,10 @@
                     <div class="retention-record"><strong>{{ $item['archive']->nama_berkas }}</strong><span>{{ $item['archive']->nomor_berkas }} · {{ $item['archive']->nama_kategori }}</span></div>
                     <span class="retention-phase {{ $item['phase'] === 'Jatuh Tempo' ? 'is-due' : '' }}">{{ $item['phase'] }}</span>
                     <div class="retention-due"><small>Jatuh tempo</small><strong>{{ $item['retention_until']->format('d/m/Y') }}</strong><span>{{ $item['final_action'] }}</span></div>
-                    @if ($canProposeRetention && $item['phase'] === 'Jatuh Tempo' && $item['archive']->status !== 'Dipinjam')
+                    @if ($canProposeRetention && $item['phase'] === 'Jatuh Tempo' && $item['archive']->status !== 'Dipinjam' && $item['disposition_status'] === null)
                         <form class="retention-propose" method="post" action="{{ route('retention.dispositions.store') }}">@csrf<input type="hidden" name="arsip_id" value="{{ $item['archive']->id }}"><input name="reason" maxlength="5000" placeholder="Alasan usulan" aria-label="Alasan usulan untuk {{ $item['archive']->nama_berkas }}" required><button class="button button-small button-primary" type="submit">Usulkan</button></form>
+                    @elseif ($item['disposition_status'])
+                        <span class="retention-muted">Usulan penyusutan {{ \Illuminate\Support\Str::lower($item['disposition_status']) }}</span>
                     @else
                         <span class="retention-muted">{{ $item['archive']->status }}</span>
                     @endif
@@ -57,16 +59,32 @@
         <div class="retention-list">
             @forelse ($dispositions as $disposition)
                 <article class="disposition-card">
-                    <div class="disposition-summary"><span class="status status-{{ \Illuminate\Support\Str::slug($disposition->status) }}">{{ $disposition->status }}</span><h3>{{ $disposition->nama_berkas }}</h3><p>{{ $disposition->nomor_berkas }} · {{ $disposition->action }}</p><p>{{ $disposition->reason }}</p><small>Pengusul: {{ $disposition->requester_name }}@if ($disposition->reviewer_name) · Pemeriksa: {{ $disposition->reviewer_name }}@endif</small>
+                    <div class="disposition-summary"><span class="status status-{{ \Illuminate\Support\Str::slug($disposition->status) }}">{{ $disposition->status }}</span><h3>{{ $disposition->nama_berkas }}</h3><p>{{ $disposition->nomor_berkas }} · {{ ['Musnahkan' => 'Pemusnahan', 'Pindahkan Arsip Inaktif' => 'Pemindahan arsip inaktif', 'Permanen' => 'Simpan sebagai arsip permanen', 'Serah ke ANRI' => 'Penyerahan ke ANRI'][$disposition->action] ?? $disposition->action }}</p><p>{{ $disposition->reason }}</p><small>Pengusul: {{ $disposition->requester_name }}@if ($disposition->reviewer_name) · Pemeriksa: {{ $disposition->reviewer_name }}@endif</small>
                         @if ($disposition->reviewer_note)<p class="retention-note">Catatan: {{ $disposition->reviewer_note }}</p>@endif
+                        @if ($disposition->status === 'Dilaksanakan')
+                            <p class="retention-note">Pelaksana: {{ $disposition->executor_name ?: '—' }} · Tanggal: {{ $disposition->execution_date ? \Illuminate\Support\Carbon::parse($disposition->execution_date)->format('d/m/Y') : '—' }}@if ($disposition->destination) · Tujuan: {{ $disposition->destination }}@endif @if ($disposition->handover_recipient) · Diserahkan kepada: {{ $disposition->handover_recipient }}@endif</p>
+                        @endif
                     </div>
                     <div class="disposition-action">
                         @if ($isApprover && $disposition->status === 'Menunggu Persetujuan' && (int) $disposition->requested_by !== (int) auth()->id())
                             <form class="disposition-review" method="post" action="{{ route('retention.dispositions.review', $disposition->id) }}">@csrf @method('PATCH')<label>Catatan (wajib jika ditolak)<input name="reviewer_note" maxlength="5000"></label><button class="button button-small button-primary" name="status" value="Disetujui">Setujui</button><button class="button button-small" name="status" value="Ditolak">Tolak</button></form>
                         @elseif ($isApprover && $disposition->status === 'Disetujui')
-                            <form class="disposition-review" method="post" action="{{ route('retention.dispositions.complete', $disposition->id) }}">@csrf @method('PATCH')<label>Nomor berita acara<input name="minutes_number" maxlength="100" required></label><label>Keterangan pelaksanaan<input name="minutes_note" maxlength="10000" required></label><button class="button button-small button-primary" type="submit">Catat pelaksanaan</button></form>
+                            <form class="disposition-review" method="post" enctype="multipart/form-data" action="{{ route('retention.dispositions.complete', $disposition->id) }}">@csrf @method('PATCH')
+                                <label>Nomor berita acara<input name="minutes_number" maxlength="100" required></label>
+                                <label>Tanggal pelaksanaan<input type="date" name="execution_date" max="{{ now()->toDateString() }}" value="{{ now()->toDateString() }}" required></label>
+                                <label>Keterangan pelaksanaan<input name="minutes_note" maxlength="10000" required></label>
+                                @if ($disposition->action !== 'Musnahkan')
+                                    <label>Tujuan pemindahan / penyimpanan<input name="destination" maxlength="255" required placeholder="Contoh: Ruang arsip inaktif / depo arsip permanen"></label>
+                                @endif
+                                @if ($disposition->action === 'Serah ke ANRI')
+                                    <label>Instansi / petugas penerima<input name="handover_recipient" maxlength="255" required placeholder="Nama penerima atau instansi ANRI"></label>
+                                @endif
+                                <label>Bukti pelaksanaan / serah-terima (PDF, JPG, PNG; maks. 10 MB)<input type="file" name="evidence" accept=".pdf,.jpg,.jpeg,.png" required></label>
+                                <button class="button button-small button-primary" type="submit">Catat pelaksanaan</button>
+                            </form>
                         @elseif ($disposition->status === 'Dilaksanakan')
                             <a class="button button-small" href="{{ route('retention.minutes', $disposition->id) }}" target="_blank" rel="noopener">Lihat berita acara</a>
+                            @if ($disposition->evidence_path)<a class="button button-small" href="{{ route('retention.evidence', $disposition->id) }}">Unduh bukti</a>@endif
                         @elseif ($disposition->status === 'Menunggu Persetujuan')
                             <span class="retention-muted">Menunggu approver</span>
                         @endif

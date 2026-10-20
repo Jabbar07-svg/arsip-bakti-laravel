@@ -283,7 +283,7 @@ class ImportExportController extends Controller
             $classification === 'Dokumen Rahasia'
             && ! RolePermissions::allows($user, RolePermissions::ARCHIVES_MANAGE_CONFIDENTIAL)
         ) {
-            return $fail('hanya Super Admin yang dapat mengimpor Dokumen Rahasia.');
+            return $fail('hanya Admin yang dapat mengimpor Dokumen Rahasia.');
         }
         $condition = trim($row['physical_condition'] ?? '') ?: 'Baik';
         if (! in_array($condition, ['Baik', 'Rusak Ringan', 'Rusak Berat', 'Tidak Lengkap'], true)) {

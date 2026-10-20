@@ -152,6 +152,27 @@ class LoanController extends Controller
                 'updated_at' => now(),
             ]);
             $this->addAudit($archive->id, $user->id, 'Mengembalikan berkas', 'Transaksi peminjaman #'.$loan);
+
+            $requestOwnerId = DB::table('loan_requests')
+                ->where('loan_id', $loan)
+                ->where('status', 'Disetujui')
+                ->value('user_id');
+            $borrower = User::query()
+                ->whereKey($requestOwnerId ?? $record->created_by)
+                ->where('role', 'Pegawai')
+                ->first(['id']);
+            if ($borrower !== null) {
+                DB::table('notifications')->insert([
+                    'user_id' => $borrower->id,
+                    'title' => 'Peminjaman dikembalikan',
+                    'body' => 'Arsip '.$archive->nama_berkas.' telah dikembalikan dengan kondisi '.$validated['condition_return'].'.',
+                    'type' => 'success',
+                    'url' => route('employee-loans.index'),
+                    'data' => json_encode(['loan_id' => $loan, 'archive_id' => $archive->id], JSON_THROW_ON_ERROR),
+                    'is_sent' => 1,
+                    'created_at' => now(),
+                ]);
+            }
         });
 
         return redirect()->route('loans.index')->with('success', 'Arsip berhasil dikembalikan dan kondisinya diperbarui.');

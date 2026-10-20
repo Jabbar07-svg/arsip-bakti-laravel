@@ -42,6 +42,50 @@ class ActivityHistoryController extends Controller
                 'u.nama',
             ]);
         ArchiveAccess::scope($query, $user, 'a');
+        if ($user->role === 'Pegawai') {
+            $returnedLoanDetails = DB::table('peminjaman')
+                ->where(function (Builder $owned) use ($user): void {
+                    $owned
+                        ->where('created_by', $user->id)
+                        ->orWhereIn('id', DB::table('loan_requests')
+                            ->select('loan_id')
+                            ->where('user_id', $user->id)
+                            ->where('status', 'Disetujui')
+                            ->whereNotNull('loan_id'));
+                })
+                ->where('status', 'Dikembalikan')
+                ->orderByDesc('id')
+                ->limit(300)
+                ->pluck('id')
+                ->map(static fn ($id): string => 'Transaksi peminjaman #'.$id)
+                ->all();
+            $reviewedRequestDetails = DB::table('loan_requests')
+                ->where('user_id', $user->id)
+                ->whereIn('status', ['Disetujui', 'Ditolak'])
+                ->orderByDesc('id')
+                ->limit(300)
+                ->get(['id', 'status'])
+                ->map(static fn (object $request): string => 'Permintaan #'.$request->id.': '.$request->status)
+                ->all();
+
+            $query->where(function (Builder $ownActivity) use ($user, $returnedLoanDetails, $reviewedRequestDetails): void {
+                $ownActivity->where('r.user_id', $user->id);
+                if ($returnedLoanDetails !== []) {
+                    $ownActivity->orWhere(function (Builder $returns) use ($returnedLoanDetails): void {
+                        $returns
+                            ->where('r.aktivitas', 'Mengembalikan berkas')
+                            ->whereIn('r.keterangan', $returnedLoanDetails);
+                    });
+                }
+                if ($reviewedRequestDetails !== []) {
+                    $ownActivity->orWhere(function (Builder $reviews) use ($reviewedRequestDetails): void {
+                        $reviews
+                            ->where('r.aktivitas', 'Memeriksa permintaan peminjaman')
+                            ->whereIn('r.keterangan', $reviewedRequestDetails);
+                    });
+                }
+            });
+        }
 
         if ($search !== '') {
             $query->where(function (Builder $matching) use ($search): void {

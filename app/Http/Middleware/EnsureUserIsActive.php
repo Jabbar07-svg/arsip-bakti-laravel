@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\RolePermissions;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,7 +18,17 @@ class EnsureUserIsActive
             $request->session()->regenerateToken();
 
             return redirect()->route('login')->withErrors([
-                'username' => 'Akun Anda tidak aktif. Hubungi Super Admin.',
+                'username' => 'Akun Anda tidak aktif. Hubungi Admin.',
+            ]);
+        }
+
+        if ($request->user() !== null && ! RolePermissions::hasSupportedRole($request->user())) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('login')->withErrors([
+                'username' => 'Role akun belum dipetakan ke sistem terbaru. Hubungi Admin.',
             ]);
         }
 

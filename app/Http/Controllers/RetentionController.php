@@ -2,20 +2,23 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
 use App\Support\ArchiveAccess;
-use App\Support\RolePermissions;
 use App\Support\RetentionReminderDispatcher;
+use App\Support\RolePermissions;
 use DateTimeImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
+use RuntimeException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 class RetentionController extends Controller
 {
-    private const FINAL_ACTIONS = ['Musnahkan', 'Permanen', 'Serah ke ANRI'];
+    private const FINAL_ACTIONS = ['Musnahkan', 'Pindahkan Arsip Inaktif', 'Permanen', 'Serah ke ANRI'];
 
     public function index(Request $request): View
     {
@@ -40,7 +43,11 @@ class RetentionController extends Controller
             'a.id', 'a.nama_berkas', 'a.nomor_berkas', 'a.tanggal_masuk',
             'a.status', 'a.kategori_id', 'k.nama_kategori',
         ])->orderBy('a.tanggal_masuk')->get();
-        $retentionRows = $archives->map(function (object $archive) use ($scheduleByCategory): ?array {
+        $dispositionStatusByArchive = DB::table('disposition_requests')
+            ->whereIn('status', ['Menunggu Persetujuan', 'Disetujui', 'Dilaksanakan'])
+            ->orderBy('id')
+            ->pluck('status', 'arsip_id');
+        $retentionRows = $archives->map(function (object $archive) use ($scheduleByCategory, $dispositionStatusByArchive): ?array {
             $schedule = $scheduleByCategory->get($archive->kategori_id);
             if ($schedule === null) {
                 return null;
@@ -53,6 +60,7 @@ class RetentionController extends Controller
                 'schedule' => $schedule,
                 ...$dates,
                 'final_action' => $schedule->final_action,
+                'disposition_status' => $dispositionStatusByArchive->get($archive->id),
             ];
         })->filter()->values();
 
@@ -75,7 +83,7 @@ class RetentionController extends Controller
             'categories' => DB::table('kategori_arsip')->orderBy('nama_kategori')->get(),
             'retentionRows' => $retentionRows,
             'dispositions' => $dispositions,
-            'isSuperAdmin' => RolePermissions::allows($user, RolePermissions::RETENTION_SCHEDULE),
+            'isAdmin' => RolePermissions::allows($user, RolePermissions::RETENTION_SCHEDULE),
             'isApprover' => RolePermissions::allows($user, RolePermissions::RETENTION_REVIEW),
             'canProposeRetention' => RolePermissions::allows($user, RolePermissions::RETENTION_PROPOSE),
             'finalActions' => self::FINAL_ACTIONS,
@@ -128,15 +136,15 @@ class RetentionController extends Controller
                 ->first(['a.*', 'j.active_months', 'j.inactive_months', 'j.final_action']);
             abort_if($archive === null || $archive->status === 'Nonaktif', 422, 'Pilih arsip aktif dengan jadwal retensi.');
             abort_unless(ArchiveAccess::canView($user, $archive), 403);
-            abort_if($archive->status === 'Dipinjam', 422, 'Arsip yang sedang dipinjam tidak dapat diusulkan untuk penyusutan.');
+            abort_unless($archive->status === 'Tersimpan', 422, 'Hanya arsip tersimpan yang dapat diusulkan untuk penyusutan.');
 
             $dates = $this->retentionDates($archive->tanggal_masuk, (int) $archive->active_months, (int) $archive->inactive_months);
             abort_unless($dates['phase'] === 'Jatuh Tempo', 422, 'Masa retensi arsip ini belum berakhir.');
             $pending = DB::table('disposition_requests')
                 ->where('arsip_id', $archive->id)
-                ->whereIn('status', ['Menunggu Persetujuan', 'Disetujui'])
+                ->whereIn('status', ['Menunggu Persetujuan', 'Disetujui', 'Dilaksanakan'])
                 ->exists();
-            abort_if($pending, 409, 'Arsip ini sudah memiliki usulan penyusutan yang belum selesai.');
+            abort_if($pending, 409, 'Arsip ini sudah memiliki usulan penyusutan yang aktif atau telah dilaksanakan.');
 
             $id = DB::table('disposition_requests')->insertGetId([
                 'arsip_id' => $archive->id,
@@ -159,7 +167,7 @@ class RetentionController extends Controller
             return $id;
         });
 
-        return redirect()->route('retention.index')->with('success', 'Usulan penyusutan dikirim kepada Super Admin.');
+        return redirect()->route('retention.index')->with('success', 'Usulan penyusutan dikirim kepada Admin.');
     }
 
     public function reviewDisposition(Request $request, int $disposition): RedirectResponse
@@ -181,9 +189,9 @@ class RetentionController extends Controller
             $archive = DB::table('arsip')->where('id', $record->arsip_id)->first();
             abort_if($archive === null, 404);
             abort_unless(
-                $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isSuperAdmin($reviewer),
+                $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isAdmin($reviewer),
                 403,
-                'Hanya Super Admin yang dapat memutuskan retensi arsip Dokumen Rahasia.'
+                'Hanya Admin yang dapat memutuskan retensi arsip Dokumen Rahasia.'
             );
             abort_unless(ArchiveAccess::canView($reviewer, $archive), 403);
             DB::table('disposition_requests')->where('id', $disposition)->update([
@@ -213,38 +221,98 @@ class RetentionController extends Controller
     {
         $user = $request->user();
         abort_unless(RolePermissions::allows($user, RolePermissions::RETENTION_REVIEW), 403);
+        $pendingRecord = DB::table('disposition_requests')->where('id', $disposition)->first();
+        abort_if($pendingRecord === null, 404);
+        $requiresDestination = $pendingRecord->action !== 'Musnahkan';
+        $requiresRecipient = $pendingRecord->action === 'Serah ke ANRI';
         $data = $request->validate([
             'minutes_number' => ['required', 'string', 'max:100'],
             'minutes_note' => ['required', 'string', 'max:10000'],
+            'execution_date' => ['required', 'date', 'before_or_equal:today'],
+            'destination' => ['nullable', 'string', 'max:255', Rule::requiredIf($requiresDestination)],
+            'handover_recipient' => ['nullable', 'string', 'max:255', Rule::requiredIf($requiresRecipient)],
+            'evidence' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
-        DB::transaction(function () use ($user, $disposition, $data): void {
-            $record = DB::table('disposition_requests')->where('id', $disposition)->lockForUpdate()->first();
-            abort_if($record === null, 404);
-            abort_unless($record->status === 'Disetujui', 409, 'Hanya usulan yang telah disetujui yang dapat dilaksanakan.');
-            abort_if((int) $record->requested_by === (int) $user->id, 403, 'Pengusul tidak dapat melaksanakan usulannya sendiri.');
-            $archive = DB::table('arsip')->where('id', $record->arsip_id)->lockForUpdate()->first();
-            abort_if($archive === null, 404);
-            abort_unless(
-                $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isSuperAdmin($user),
-                403,
-                'Hanya Super Admin yang dapat melaksanakan retensi arsip Dokumen Rahasia.'
-            );
-            abort_unless(ArchiveAccess::canView($user, $archive), 403);
-            DB::table('disposition_requests')->where('id', $disposition)->update([
-                'status' => 'Dilaksanakan',
-                'completed_at' => now(),
-                'minutes_number' => trim($data['minutes_number']),
-                'minutes_note' => trim($data['minutes_note']),
-                'updated_at' => now(),
-            ]);
-            if ($record->action === 'Musnahkan') {
-                DB::table('arsip')->where('id', $archive->id)->update(['status' => 'Nonaktif', 'updated_at' => now()]);
-            }
-            $this->addAudit((int) $archive->id, $user->id, 'Melaksanakan penyusutan arsip', 'Berita acara '.trim($data['minutes_number']).'; tindakan: '.$record->action);
-        });
+        $evidencePath = $request->file('evidence')->store('retention-evidence', 'local');
+        if ($evidencePath === false) {
+            throw new RuntimeException('Bukti pelaksanaan gagal disimpan. Retensi belum diubah.');
+        }
+
+        try {
+            DB::transaction(function () use ($user, $disposition, $data, $evidencePath): void {
+                $record = DB::table('disposition_requests')->where('id', $disposition)->lockForUpdate()->first();
+                abort_if($record === null, 404);
+                abort_unless($record->status === 'Disetujui', 409, 'Hanya usulan yang telah disetujui yang dapat dilaksanakan.');
+                abort_if((int) $record->requested_by === (int) $user->id, 403, 'Pengusul tidak dapat melaksanakan usulannya sendiri.');
+                abort_unless(in_array($record->action, self::FINAL_ACTIONS, true), 409, 'Jenis tindakan retensi tidak dikenali.');
+                $archive = DB::table('arsip')->where('id', $record->arsip_id)->lockForUpdate()->first();
+                abort_if($archive === null, 404);
+                abort_unless($archive->status === 'Tersimpan', 409, 'Arsip harus berstatus tersimpan dan tidak sedang dipinjam atau diproses.');
+                abort_unless(
+                    $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isAdmin($user),
+                    403,
+                    'Hanya Admin yang dapat melaksanakan retensi arsip Dokumen Rahasia.'
+                );
+                abort_unless(ArchiveAccess::canView($user, $archive), 403);
+
+                DB::table('disposition_requests')->where('id', $disposition)->update([
+                    'status' => 'Dilaksanakan',
+                    'completed_at' => now(),
+                    'minutes_number' => trim($data['minutes_number']),
+                    'minutes_note' => trim($data['minutes_note']),
+                    'executed_by' => $user->id,
+                    'execution_date' => $data['execution_date'],
+                    'destination' => trim((string) ($data['destination'] ?? '')) ?: null,
+                    'handover_recipient' => trim((string) ($data['handover_recipient'] ?? '')) ?: null,
+                    'evidence_path' => $evidencePath,
+                    'updated_at' => now(),
+                ]);
+                if (in_array($record->action, ['Musnahkan', 'Pindahkan Arsip Inaktif', 'Serah ke ANRI'], true)) {
+                    DB::table('arsip')->where('id', $archive->id)->update(['status' => 'Nonaktif', 'updated_at' => now()]);
+                }
+                $this->addAudit(
+                    (int) $archive->id,
+                    $user->id,
+                    'Melaksanakan penyusutan arsip',
+                    'Berita acara '.trim($data['minutes_number']).'; tindakan: '.$record->action.'; tanggal: '.$data['execution_date']
+                    .(($data['destination'] ?? '') !== '' ? '; tujuan: '.trim($data['destination']) : '')
+                    .(($data['handover_recipient'] ?? '') !== '' ? '; penerima: '.trim($data['handover_recipient']) : '')
+                );
+                DB::table('notifications')->insert([
+                    'user_id' => $record->requested_by,
+                    'title' => 'Pelaksanaan retensi selesai',
+                    'body' => 'Usulan #'.$disposition.' telah dilaksanakan. Berita acara '.trim($data['minutes_number']).'.',
+                    'type' => 'success',
+                    'url' => route('retention.minutes', $disposition),
+                    'data' => json_encode(['disposition_id' => $disposition], JSON_THROW_ON_ERROR),
+                    'is_sent' => 1,
+                    'created_at' => now(),
+                ]);
+            });
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($evidencePath);
+
+            throw $exception;
+        }
 
         return redirect()->route('retention.minutes', $disposition)->with('success', 'Pelaksanaan dan berita acara berhasil dicatat.');
+    }
+
+    public function evidence(Request $request, int $disposition): StreamedResponse
+    {
+        abort_unless(RolePermissions::allows($request->user(), RolePermissions::RETENTION_VIEW), 403);
+        $record = DB::table('disposition_requests as d')
+            ->join('arsip as a', 'a.id', '=', 'd.arsip_id')
+            ->where('d.id', $disposition)
+            ->where('d.status', 'Dilaksanakan')
+            ->select(['d.evidence_path', 'a.classification', 'a.division'])
+            ->first();
+        abort_if($record === null || $record->evidence_path === null, 404);
+        abort_unless(ArchiveAccess::canView($request->user(), $record), 403);
+        abort_unless(Storage::disk('local')->exists($record->evidence_path), 404);
+
+        return Storage::disk('local')->download($record->evidence_path, 'bukti-retensi-'.$disposition);
     }
 
     public function minutes(Request $request, int $disposition): View
@@ -254,9 +322,10 @@ class RetentionController extends Controller
             ->join('arsip as a', 'a.id', '=', 'd.arsip_id')
             ->join('users as requester', 'requester.id', '=', 'd.requested_by')
             ->leftJoin('users as reviewer', 'reviewer.id', '=', 'd.reviewed_by')
+            ->leftJoin('users as executor', 'executor.id', '=', 'd.executed_by')
             ->where('d.id', $disposition)
             ->where('d.status', 'Dilaksanakan')
-            ->select(['d.*', 'a.nama_berkas', 'a.nomor_berkas', 'a.classification', 'a.division', 'requester.nama as requester_name', 'reviewer.nama as reviewer_name'])
+            ->select(['d.*', 'a.nama_berkas', 'a.nomor_berkas', 'a.classification', 'a.division', 'requester.nama as requester_name', 'reviewer.nama as reviewer_name', 'executor.nama as executor_name'])
             ->first();
         abort_if($record === null, 404);
         abort_unless(ArchiveAccess::canView($request->user(), $record), 403);
@@ -291,7 +360,7 @@ class RetentionController extends Controller
 
     private function notifyAdmins(string $title, string $body, array $data): void
     {
-        $adminIds = DB::table('users')->where('role', 'Super Admin')->where('status', 'Aktif')->pluck('id');
+        $adminIds = DB::table('users')->where('role', 'Admin')->where('status', 'Aktif')->pluck('id');
         foreach ($adminIds as $adminId) {
             DB::table('notifications')->insert([
                 'user_id' => $adminId,

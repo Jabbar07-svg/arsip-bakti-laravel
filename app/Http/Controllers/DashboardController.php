@@ -14,8 +14,13 @@ class DashboardController extends Controller
     public function __invoke(Request $request): View|RedirectResponse
     {
         $user = $request->user();
+        $landingRoute = RolePermissions::landingRouteName($user);
+        if ($landingRoute !== 'dashboard') {
+            return redirect()->route($landingRoute);
+        }
+
         if (! RolePermissions::allows($user, RolePermissions::DASHBOARD_VIEW)) {
-            return redirect()->route('archives.index');
+            abort(403);
         }
 
         $year = now()->year;

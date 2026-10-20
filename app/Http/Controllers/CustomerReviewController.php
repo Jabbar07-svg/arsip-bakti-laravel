@@ -82,9 +82,9 @@ class CustomerReviewController extends Controller
             $archiveId = $record->arsip_id === null ? null : (int) $record->arsip_id;
             if ($validated['status'] === 'Disetujui' && $archiveId === null) {
                 abort_unless(
-                    $validated['classification'] !== 'Dokumen Rahasia' || RolePermissions::isSuperAdmin($reviewer),
+                    $validated['classification'] !== 'Dokumen Rahasia' || RolePermissions::isAdmin($reviewer),
                     403,
-                    'Hanya Super Admin yang dapat menyetujui arsip Dokumen Rahasia.'
+                    'Hanya Admin yang dapat menyetujui arsip Dokumen Rahasia.'
                 );
                 $location = DB::table('lokasi')->where('id', $validated['lokasi_id'])->where('status', 'Aktif')->first();
                 abort_if($location === null, 422, 'Pilih lokasi aktif sebelum menyetujui dokumen.');
@@ -132,9 +132,9 @@ class CustomerReviewController extends Controller
                 $existingArchive = DB::table('arsip')->where('id', $archiveId)->first();
                 abort_if($existingArchive === null, 404);
                 abort_unless(
-                    $existingArchive->classification !== 'Dokumen Rahasia' || RolePermissions::isSuperAdmin($reviewer),
+                    $existingArchive->classification !== 'Dokumen Rahasia' || RolePermissions::isAdmin($reviewer),
                     403,
-                    'Hanya Super Admin yang dapat menyetujui arsip Dokumen Rahasia.'
+                    'Hanya Admin yang dapat menyetujui arsip Dokumen Rahasia.'
                 );
             }
 

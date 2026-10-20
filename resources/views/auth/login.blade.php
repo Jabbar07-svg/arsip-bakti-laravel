@@ -55,7 +55,13 @@
                     <span>Masuk ke sistem</span><span aria-hidden="true">→</span>
                 </button>
             </form>
-            <p class="auth-help">Akun aktif yang sama digunakan pada aplikasi sebelumnya. Modul yang belum dipindahkan tetap dapat diakses melalui aplikasi lama.</p>
+            @if (config('ldap.auth_mode') === 'ldap')
+                <p class="auth-help">Gunakan akun internal BAKTI/Komdigi. Jika lupa password, hubungi administrator atau ikuti prosedur pemulihan akun resmi.</p>
+            @elseif (config('ldap.auth_mode') === 'local')
+                <p class="auth-help">Akun aktif yang sama digunakan pada aplikasi sebelumnya. Modul yang belum dipindahkan tetap dapat diakses melalui aplikasi lama.</p>
+            @else
+                <p class="auth-help">Metode autentikasi belum dikonfigurasi. Hubungi administrator.</p>
+            @endif
             <div class="auth-security-note"><span aria-hidden="true">▣</span><span>Akses terlindungi · Gunakan akun pribadi Anda</span></div>
         </section>
     </div>

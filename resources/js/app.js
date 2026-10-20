@@ -142,18 +142,22 @@ document.querySelectorAll('[data-file-preview-input]').forEach(input => {
     const clear = preview?.querySelector('[data-file-clear]');
 
     const updatePreview = () => {
-        const file = input.files?.[0];
-        if (!file || !preview) {
+        const files = Array.from(input.files || []);
+        if (files.length === 0 || !preview) {
             if (preview) {
                 preview.hidden = true;
             }
             return;
         }
         if (name) {
-            name.textContent = file.name;
+            name.textContent = files.map(file => file.name).join(', ');
         }
         if (size) {
-            size.textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB`;
+            const totalSize = files.reduce((total, file) => total + file.size, 0);
+            const sizeLabel = `${(totalSize / 1024 / 1024).toFixed(2)} MB`;
+            size.textContent = files.length > 1
+                ? `${files.length} file · ${sizeLabel} total`
+                : sizeLabel;
         }
         preview.hidden = false;
     };
@@ -166,12 +170,25 @@ document.querySelectorAll('[data-file-preview-input]').forEach(input => {
     });
 });
 
-document.querySelectorAll('[data-upload-form], [data-submit-form]').forEach(form => {
-    form.addEventListener('submit', () => {
-        const button = form.querySelector('[data-submit-button]');
-        if (!button || button.disabled) {
+const submitButtons = new WeakMap();
+const submitForms = document.querySelectorAll('[data-upload-form], [data-submit-form]');
+submitForms.forEach(form => {
+    const button = form.querySelector('[data-submit-button]');
+    if (button) {
+        submitButtons.set(button, button.innerHTML);
+    }
+
+    form.addEventListener('submit', event => {
+        if (form.dataset.submitting === 'true') {
+            event.preventDefault();
             return;
         }
+
+        const button = form.querySelector('[data-submit-button]');
+        if (!button) {
+            return;
+        }
+        form.dataset.submitting = 'true';
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
         const label = button.querySelector('span');
@@ -179,6 +196,23 @@ document.querySelectorAll('[data-upload-form], [data-submit-form]').forEach(form
             label.textContent = 'Mengirim…';
         } else {
             button.textContent = 'Memproses…';
+        }
+    });
+});
+
+window.addEventListener('pageshow', () => {
+    submitForms.forEach(form => {
+        delete form.dataset.submitting;
+        const button = form.querySelector('[data-submit-button]');
+        if (!button) {
+            return;
+        }
+
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        const originalContent = submitButtons.get(button);
+        if (originalContent !== undefined) {
+            button.innerHTML = originalContent;
         }
     });
 });

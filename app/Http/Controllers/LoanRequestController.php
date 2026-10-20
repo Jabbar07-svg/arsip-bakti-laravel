@@ -22,6 +22,20 @@ class LoanRequestController extends Controller
         ArchiveAccess::scope($requests, $request->user(), 'a');
         $requests = $requests
             ->where('r.user_id', $request->user()->id)
+            ->select([
+                'r.id',
+                'r.arsip_id',
+                'r.purpose',
+                'r.requested_due_date',
+                'r.status',
+                'r.reviewer_note',
+                'r.reviewed_at',
+                'r.loan_id',
+                'r.created_at',
+                'r.updated_at',
+                'a.nama_berkas',
+                'a.nomor_berkas',
+            ])
             ->orderByDesc('r.id')
             ->paginate(20)
             ->withQueryString();
@@ -65,6 +79,7 @@ class LoanRequestController extends Controller
                 'updated_at' => now(),
             ]);
 
+            $this->addAudit((int) $record->id, $user->id, 'Mengajukan peminjaman', 'Permintaan #'.$id.'; Status: Menunggu Persetujuan');
             $this->notifyActiveAdmins(
                 'Permintaan peminjaman baru',
                 $user->nama.' meminta peminjaman untuk arsip '.$record->nomor_berkas.'.',
@@ -131,9 +146,9 @@ class LoanRequestController extends Controller
             $createdLoanId = null;
             if ($validated['decision'] === 'Disetujui') {
                 abort_unless(
-                    $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isSuperAdmin($user),
+                    $archive->classification !== 'Dokumen Rahasia' || RolePermissions::isAdmin($user),
                     403,
-                    'Hanya Super Admin yang dapat menyetujui peminjaman arsip Dokumen Rahasia.'
+                    'Hanya Admin yang dapat menyetujui peminjaman arsip Dokumen Rahasia.'
                 );
                 abort_unless($archive->classification === 'Publik' && $archive->status === 'Tersimpan', 409, 'Arsip sudah tidak tersedia; permintaan tidak dapat disetujui.');
                 $requester = DB::table('users')->where('id', $submission->user_id)->first();
@@ -174,7 +189,7 @@ class LoanRequestController extends Controller
             DB::table('notifications')->insert([
                 'user_id' => $submission->user_id,
                 'title' => 'Permintaan peminjaman '.strtolower($validated['decision']),
-                'body' => 'Keputusan untuk arsip '.$submission->arsip_id.': '.$validated['decision']
+                'body' => 'Keputusan untuk arsip '.$archive->nama_berkas.' ('.$archive->nomor_berkas.'): '.$validated['decision']
                     .(empty($validated['reviewer_note']) ? '' : ' · '.$validated['reviewer_note']),
                 'type' => $validated['decision'] === 'Disetujui' ? 'success' : 'warning',
                 'url' => route('loan-requests.index'),
@@ -210,7 +225,7 @@ class LoanRequestController extends Controller
     private function notifyActiveAdmins(string $title, string $body, string $url, array $data): void
     {
         $admins = DB::table('users')
-            ->where('role', 'Super Admin')
+            ->where('role', 'Admin')
             ->where('status', 'Aktif')
             ->pluck('id');
 

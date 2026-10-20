@@ -4,13 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Support\RolePermissions;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
-use RuntimeException;
 
 class UserController extends Controller
 {
@@ -55,28 +55,46 @@ class UserController extends Controller
             'username' => trim((string) $request->input('username')),
         ]);
         $roles = $this->assignableRoles();
-        $requestedRole = $request->input('role');
-        if (in_array($requestedRole, RolePermissions::ASSIGNABLE_ROLES, true)
-            && ! in_array($requestedRole, $roles, true)) {
-            return back()
-                ->withInput()
-                ->withErrors(['role' => 'Skema database belum mendukung role tersebut. Role akun tidak diubah.']);
-        }
         $validated = $request->validate([
             'nama' => ['required', 'string', 'max:150'],
             'username' => ['required', 'string', 'max:80', 'alpha_dash', 'unique:users,username'],
-            'password' => ['required', 'string', 'min:8', 'max:255'],
+            'password' => ['required', 'string', 'min:12', 'max:255'],
             'role' => ['required', Rule::in($roles)],
             'division' => ['nullable', 'string', 'max:150'],
+            'status' => ['sometimes', Rule::in(['Aktif', 'Nonaktif'])],
+        ], [
+            'nama.required' => 'Nama lengkap wajib diisi.',
+            'nama.max' => 'Nama lengkap maksimal 150 karakter.',
+            'username.required' => 'Username wajib diisi.',
+            'username.max' => 'Username maksimal 80 karakter.',
+            'username.alpha_dash' => 'Username hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah.',
+            'username.unique' => 'Username sudah digunakan. Pilih username lain.',
+            'password.required' => 'Password wajib diisi.',
+            'password.min' => 'Password minimal 12 karakter.',
+            'password.max' => 'Password maksimal 255 karakter.',
+            'role.required' => 'Pilih hak akses untuk akun ini.',
+            'role.in' => 'Hak akses yang dipilih tidak valid.',
+            'division.max' => 'Nama divisi maksimal 150 karakter.',
+            'status.in' => 'Status akun yang dipilih tidak valid.',
         ]);
-        User::query()->create([
-            'nama' => trim($validated['nama']),
-            'username' => trim($validated['username']),
-            'password' => Hash::make($validated['password']),
-            'role' => $validated['role'],
-            'division' => trim((string) ($validated['division'] ?? '')) ?: null,
-            'status' => 'Aktif',
-        ]);
+        try {
+            User::query()->create([
+                'nama' => trim($validated['nama']),
+                'username' => trim($validated['username']),
+                'password' => Hash::make($validated['password']),
+                'role' => $validated['role'],
+                'division' => trim((string) ($validated['division'] ?? '')) ?: null,
+                'status' => $validated['status'] ?? 'Aktif',
+            ]);
+        } catch (QueryException $exception) {
+            if (! $this->isUsernameUniqueViolation($exception)) {
+                throw $exception;
+            }
+
+            return back()
+                ->withInput($request->except(['password', 'password_confirmation', '_token']))
+                ->withErrors(['username' => 'Username sudah digunakan. Pilih username lain.']);
+        }
 
         return redirect()->route('users.index')->with('success', 'Akun pengguna berhasil ditambahkan.');
     }
@@ -88,10 +106,7 @@ class UserController extends Controller
             $target = DB::table('users')->where('id', $user)->lockForUpdate()->first();
             abort_if($target === null, 404);
             abort_if((int) $target->id === (int) $request->user()->id, 409, 'Akun yang sedang digunakan tidak dapat dinonaktifkan.');
-            if ($target->role === 'Super Admin' && $target->status === 'Aktif') {
-                $activeAdmins = DB::table('users')->where('role', 'Super Admin')->where('status', 'Aktif')->count();
-                abort_if($activeAdmins <= 1, 409, 'Super Admin aktif terakhir tidak dapat dinonaktifkan.');
-            }
+            abort_if($target->role === 'Admin', 409, 'Status Admin utama hanya dapat diubah melalui prosedur pemulihan terkendali.');
             $nextStatus = $target->status === 'Aktif' ? 'Nonaktif' : 'Aktif';
             DB::table('users')->where('id', $user)->update(['status' => $nextStatus, 'updated_at' => now()]);
             if ($nextStatus === 'Nonaktif') {
@@ -119,33 +134,15 @@ class UserController extends Controller
     {
         $this->authorizeAdmin($request->user());
         $roles = $this->assignableRoles();
-        $requestedRole = $request->input('role');
-        if (in_array($requestedRole, RolePermissions::ASSIGNABLE_ROLES, true)
-            && ! in_array($requestedRole, $roles, true)) {
-            return back()
-                ->withInput()
-                ->withErrors(['role' => 'Skema database belum mendukung role tersebut. Role akun tidak diubah.']);
-        }
         $validated = $request->validate(['role' => ['required', Rule::in($roles)]]);
 
         DB::transaction(function () use ($request, $user, $validated): void {
             abort_if($user === (int) $request->user()->id, 409, 'Role akun yang sedang digunakan tidak dapat diubah.');
-            if ($validated['role'] !== 'Super Admin') {
-                DB::table('users')
-                    ->where('role', 'Super Admin')
-                    ->where('status', 'Aktif')
-                    ->lockForUpdate()
-                    ->get(['id']);
-            }
-
             $target = DB::table('users')->where('id', $user)->lockForUpdate()->first();
             abort_if($target === null, 404);
+            abort_if($target->role === 'Admin', 409, 'Role Admin utama hanya dapat diubah melalui prosedur pemulihan terkendali.');
             if ($target->role === $validated['role']) {
                 return;
-            }
-            if ($target->role === 'Super Admin' && $target->status === 'Aktif' && $validated['role'] !== 'Super Admin') {
-                $activeAdmins = DB::table('users')->where('role', 'Super Admin')->where('status', 'Aktif')->count();
-                abort_if($activeAdmins <= 1, 409, 'Super Admin aktif terakhir tidak dapat diturunkan role-nya.');
             }
 
             DB::table('users')->where('id', $user)->update([
@@ -161,6 +158,10 @@ class UserController extends Controller
     public function issueResetLink(Request $request): RedirectResponse
     {
         $this->authorizeAdmin($request->user());
+        if (config('ldap.auth_mode') !== 'local') {
+            return back()->withErrors(['user_id' => 'Reset password lokal tidak berlaku untuk akun direktori. Hubungi administrator BAKTI/Komdigi.']);
+        }
+
         $validated = $request->validate([
             'request_id' => ['nullable', 'integer', 'exists:password_reset_requests,id'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
@@ -210,7 +211,7 @@ class UserController extends Controller
             DB::table('notifications')->insert([
                 'user_id' => $targetUserId,
                 'title' => 'Tautan reset password siap',
-                'body' => 'Super Admin telah menyiapkan tautan sekali pakai yang berlaku selama 30 menit.',
+                'body' => 'Admin telah menyiapkan tautan sekali pakai yang berlaku selama 30 menit.',
                 'type' => 'info',
                 'url' => route('account.show'),
                 'data' => json_encode(['password_reset_request_id' => $reset->id], JSON_THROW_ON_ERROR),
@@ -227,32 +228,20 @@ class UserController extends Controller
         abort_unless(RolePermissions::allows($user, RolePermissions::USERS_MANAGE), 403);
     }
 
+    private function isUsernameUniqueViolation(QueryException $exception): bool
+    {
+        if ((string) $exception->getCode() !== '23000') {
+            return false;
+        }
+
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'uq_users_username')
+            || str_contains($message, 'users.username');
+    }
+
     private function assignableRoles(): array
     {
-        $driver = DB::connection()->getDriverName();
-        if (! in_array($driver, ['mysql', 'mariadb'], true)) {
-            return RolePermissions::ASSIGNABLE_ROLES;
-        }
-
-        $column = DB::selectOne(
-            'SELECT COLUMN_TYPE AS column_type
-             FROM information_schema.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = ?
-               AND COLUMN_NAME = ?',
-            ['users', 'role'],
-        );
-        if (! is_string($column->column_type ?? null)) {
-            throw new RuntimeException('The users.role column could not be inspected; role assignment is blocked.');
-        }
-
-        $columnType = (string) $column->column_type;
-        if (! str_starts_with(strtolower($columnType), 'enum(') || ! str_ends_with($columnType, ')')) {
-            return RolePermissions::ASSIGNABLE_ROLES;
-        }
-
-        $databaseRoles = str_getcsv(substr($columnType, 5, -1), ',', "'", '\\');
-
-        return array_values(array_intersect(RolePermissions::ASSIGNABLE_ROLES, $databaseRoles));
+        return RolePermissions::STAFF_ASSIGNABLE_ROLES;
     }
 }

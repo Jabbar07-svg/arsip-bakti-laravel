@@ -4,6 +4,15 @@
 
 Dokumen ini berisi inventaris skema read-only dari koneksi runtime Laravel ke database `arsip_bakti`. Pemeriksaan hanya membaca MySQL `information_schema`; tidak membaca baris data aplikasi, menjalankan DDL, atau mengubah database aktif. Kredensial, data pengguna, dan nilai role tidak disertakan. Nilai `COLUMN_DEFAULT` yang dilaporkan `NULL` dapat berarti default nullable implisit atau tidak ada default eksplisit; simpan keluaran `SHOW CREATE TABLE` dari server saat menulis migration mendatang jika pembedaan ini diperlukan.
 
+> **Status diperbarui 15 Oktober 2026:** inventaris dan hasil Tahap 1B di bawah
+> adalah snapshot historis. Pemeriksaan metadata setelahnya menemukan tabel
+> `migrations` pada `arsip_bakti` dengan satu catatan migration
+> `2026_10_12_000001_add_admin_and_pegawai_to_users_role_enum`; tipe
+> `users.role` sekarang mencakup `Admin` dan `Pegawai`. Database bernama
+> `arsip_bakti` tetap dilindungi dan tidak boleh menjadi target perubahan baru.
+> Migration `Kepala Divisi` ditambahkan ke source setelah pemeriksaan ini,
+> tetapi belum dijalankan pada database mana pun.
+
 Inventaris berikut menggambarkan database yang terhubung pada saat pemeriksaan, bukan otomatis berlaku untuk semua environment. Jumlah tabel tidak menyertakan schema lain pada server MySQL.
 
 | Metadata | Hasil |

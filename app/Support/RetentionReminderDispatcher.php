@@ -15,7 +15,7 @@ class RetentionReminderDispatcher
             ->select(['a.id', 'a.nama_berkas', 'a.tanggal_masuk', 'j.active_months', 'j.inactive_months', 'j.alert_days'])
             ->get();
         $adminIds = DB::table('users')
-            ->where('role', 'Super Admin')
+            ->where('role', 'Admin')
             ->where('status', 'Aktif')
             ->pluck('id');
         $created = 0;

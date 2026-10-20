@@ -202,10 +202,10 @@
         @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important}}
     </style>
 </head>
-<body @if (request()->routeIs('login'))
+<body @auth data-notification-feed="{{ route('notifications.feed') }}" @endauth>
+    @if (request()->routeIs('login'))
     <button class="theme-toggle theme-login-toggle" type="button" data-theme-toggle aria-pressed="false">Gunakan tema gelap</button>
-@endif
-@auth data-notification-feed="{{ route('notifications.feed') }}" @endauth>
+    @endif
     <svg xmlns="http://www.w3.org/2000/svg" class="visually-hidden" aria-hidden="true">
         <symbol id="nav-dashboard" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="4" rx="1.5"/><rect x="13.5" y="10.5" width="7" height="10" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/></symbol>
         <symbol id="nav-scan" viewBox="0 0 24 24"><path d="M4 8V4h4m8 0h4v4M4 16v4h4m8 0h4v-4M8 8h2v2H8zm6 0h2v2h-2zm-6 6h2v2H8zm6 0h3v3h-3z"/></symbol>
@@ -233,13 +233,20 @@
                     <span><span class="brand-title">Sistem Arsip</span><span class="brand-subtitle">BAKTI Komdigi · Gudang Utama</span></span>
                 </a>
                 <nav class="main-nav" aria-label="Navigasi utama">
-                @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::CUSTOMER_PORTAL))
-                    <a href="{{ route('customer.portal') }}" @class(['active' => request()->routeIs('customer.portal')])><svg class="nav-icon"><use href="#nav-dashboard"/></svg>Dashboard</a>
-                    <a href="{{ route('customer.archives.index') }}" @class(['active' => request()->routeIs('customer.archives.*', 'archives.show')])><svg class="nav-icon"><use href="#nav-archive"/></svg>Katalog Arsip</a>
-                    <a href="{{ route('customer.submissions.create') }}" @class(['active' => request()->routeIs('customer.submissions.create')])><svg class="nav-icon"><use href="#nav-import"/></svg>Kirim Dokumen</a>
-                    <a href="{{ route('customer.access-requests.create') }}" @class(['active' => request()->routeIs('customer.access-requests.create')])><svg class="nav-icon"><use href="#nav-approval"/></svg>Minta Pemeriksaan</a>
-                    <a href="{{ route('customer.history') }}" @class(['active' => request()->routeIs('customer.history')])><svg class="nav-icon"><use href="#nav-history"/></svg>Riwayat Permintaan</a>
-                    <a href="{{ route('loan-requests.index') }}" @class(['active' => request()->routeIs('loan-requests.*')])><svg class="nav-icon"><use href="#nav-loan"/></svg>Peminjaman</a>
+                @if (auth()->user()->role === 'Pegawai')
+                    <a href="{{ route('pegawai.dashboard') }}" @class(['active' => request()->routeIs('pegawai.dashboard')])><svg class="nav-icon"><use href="#nav-dashboard"/></svg>Dashboard</a>
+                    <a href="{{ route('archives.index') }}" @class(['active' => request()->routeIs('archives.*')])><svg class="nav-icon"><use href="#nav-archive"/></svg>Data Arsip</a>
+                    <a href="{{ route('qr.scanner') }}" @class(['active' => request()->routeIs('qr.scanner')])><svg class="nav-icon"><use href="#nav-scan"/></svg>Scan QR</a>
+                    <a href="{{ route('employee-loans.index') }}" @class(['active' => request()->routeIs('employee-loans.*')])><svg class="nav-icon"><use href="#nav-loan"/></svg>Peminjaman Tanpa QR</a>
+                    @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::LOANS_REQUEST))
+                        <a href="{{ route('loan-requests.index') }}" @class(['active' => request()->routeIs('loan-requests.*')])><svg class="nav-icon"><use href="#nav-approval"/></svg>Permintaan Peminjaman</a>
+                    @endif
+                    @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DISTRIBUTIONS_REQUEST))
+                        <a href="{{ route('distributions.index') }}" @class(['active' => request()->routeIs('distributions.*')])><svg class="nav-icon"><use href="#nav-import"/></svg>Distribusi Arsip</a>
+                    @endif
+                    <a href="{{ route('history.index') }}" @class(['active' => request()->routeIs('history.*')])><svg class="nav-icon"><use href="#nav-history"/></svg>Riwayat</a>
+                    <a href="{{ route('notifications.index') }}" @class(['active' => request()->routeIs('notifications.*')])><svg class="nav-icon"><use href="#nav-bell"/></svg>Notifikasi</a>
+                    <a href="{{ route('account.show') }}" @class(['active' => request()->routeIs('account.*')])><svg class="nav-icon"><use href="#nav-users"/></svg>Profil</a>
                 @else
                     @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DASHBOARD_VIEW))
                         <a href="{{ route('dashboard') }}" @class(['active' => request()->routeIs('dashboard')])><svg class="nav-icon"><use href="#nav-dashboard"/></svg>Dashboard</a>
@@ -256,14 +263,17 @@
                     @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::LOANS_MANAGE))
                         <a href="{{ route('loans.index') }}" @class(['active' => request()->routeIs('loans.*')])><svg class="nav-icon"><use href="#nav-loan"/></svg>Peminjaman</a>
                     @endif
+                    @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DISTRIBUTIONS_REQUEST)
+                        || \App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DISTRIBUTIONS_APPROVE)
+                        || \App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DISTRIBUTIONS_DISPATCH)
+                        || \App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::DISTRIBUTIONS_RECEIVE))
+                        <a href="{{ route('distributions.index') }}" @class(['active' => request()->routeIs('distributions.*')])><svg class="nav-icon"><use href="#nav-import"/></svg>Distribusi Arsip</a>
+                    @endif
                     @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::RETENTION_VIEW))
                         <a href="{{ route('retention.index') }}" @class(['active' => request()->routeIs('retention.*')])><svg class="nav-icon"><use href="#nav-retention"/></svg>Retensi</a>
                     @endif
                     @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::LOANS_APPROVE))
                         <a href="{{ route('loan-approvals.index') }}" @class(['active' => request()->routeIs('loan-approvals.*')])><svg class="nav-icon"><use href="#nav-approval"/></svg>Persetujuan</a>
-                    @endif
-                    @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::CUSTOMER_REVIEW))
-                        <a href="{{ route('customer-reviews.index') }}" @class(['active' => request()->routeIs('customer-reviews.*')])><svg class="nav-icon"><use href="#nav-customer"/></svg>Verifikasi Customer</a>
                     @endif
                     @if (\App\Support\RolePermissions::allows(auth()->user(), \App\Support\RolePermissions::REPORTS_VIEW))
                         <a href="{{ route('reports.index') }}" @class(['active' => request()->routeIs('reports.*')])><svg class="nav-icon"><use href="#nav-report"/></svg>Laporan</a>

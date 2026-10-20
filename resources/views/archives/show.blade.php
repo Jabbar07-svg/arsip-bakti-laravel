@@ -19,6 +19,7 @@
     </div>
 
     @if (session('success'))<div class="notice-success" role="status">{{ session('success') }}</div>@endif
+    @if ($errors->any())<div class="notice-error" role="alert">{{ $errors->first() }}</div>@endif
 
     <div class="detail-layout">
         <div class="detail-main">
@@ -30,11 +31,24 @@
                 @if ($canRequestLoan)
                     <form class="loan-request-form" method="post" action="{{ route('loan-requests.store', $archive->id) }}">
                         @csrf
+                        <div class="no-qr-notice"><strong>Ajukan peminjaman · perlu persetujuan</strong><span>Permintaan arsip publik akan ditinjau approver. Statusnya dapat dipantau pada menu Permintaan Peminjaman.</span></div>
                         <label>Keperluan peminjaman<textarea name="purpose" rows="2" maxlength="5000" required>{{ old('purpose') }}</textarea></label>
                         <label>Rencana tanggal kembali (opsional)<input type="date" name="requested_due_date" min="{{ now()->toDateString() }}" value="{{ old('requested_due_date') }}"></label>
                         @error('purpose')<span class="form-error">{{ $message }}</span>@enderror
                         @error('requested_due_date')<span class="form-error">{{ $message }}</span>@enderror
                         <button class="button button-primary" type="submit">Ajukan peminjaman</button>
+                    </form>
+                @endif
+                @if ($canBorrowWithoutQr)
+                    <form class="loan-request-form" method="post" action="{{ route('employee-loans.store', $archive->id) }}" data-submit-form>
+                        @csrf
+                        <div class="no-qr-notice"><strong>Peminjaman tanpa QR</strong><span>Arsip dipilih dari halaman ini. Tidak perlu scan atau memasukkan kode QR.</span></div>
+                        <label>Keperluan (opsional)<textarea name="keperluan" rows="2" maxlength="5000">{{ old('keperluan') }}</textarea></label>
+                        <label>Rencana tanggal kembali (opsional)<input type="date" name="tanggal_rencana_kembali" min="{{ now()->toDateString() }}" value="{{ old('tanggal_rencana_kembali') }}"></label>
+                        @error('keperluan')<span class="form-error">{{ $message }}</span>@enderror
+                        @error('tanggal_rencana_kembali')<span class="form-error">{{ $message }}</span>@enderror
+                        <button class="button button-primary" type="submit" data-submit-button onclick="return confirm('Catat peminjaman arsip ini tanpa memindai QR?')">Pinjam tanpa QR</button>
+                        <a class="button button-small" href="{{ route('employee-loans.index') }}">Lihat peminjaman saya</a>
                     </form>
                 @endif
                 <dl class="archive-details">
@@ -62,7 +76,7 @@
                         </div>
                     </div>
                 @empty
-                    <div class="empty-inline">Belum ada lampiran digital.</div>
+                    <div class="empty-inline">Tidak ada lampiran digital.</div>
                 @endforelse
             </section>
 
@@ -123,6 +137,7 @@
 .archive-barcode-preview{display:block;width:min(100%,280px);height:62px;margin:0 auto}
 .record-heading h2{margin:10px 0 4px;color:#1c405b;font-size:19px}
 .record-heading p{margin:0;color:#8294a0;font-size:11px}
+.no-qr-notice{display:grid;gap:4px;padding:11px 12px;border:1px solid #cfe6f1;border-radius:9px;background:#f1f9fc}.no-qr-notice strong{color:#17678f;font-size:12px}.no-qr-notice span{color:#637b8b;font-size:10px;line-height:1.5}
 .record-qr{display:grid;gap:5px;text-align:right}
 .record-qr span,.archive-details dt,.loan-panel dt{color:#8597a3;font-size:10px}
 .record-qr strong{color:#0876b3;font-size:11px;overflow-wrap:anywhere}

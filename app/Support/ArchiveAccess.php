@@ -21,7 +21,7 @@ class ArchiveAccess
     {
         $classification = (string) data_get($archive, 'classification', 'Internal');
 
-        if (RolePermissions::isSuperAdmin($user)) {
+        if (RolePermissions::isAdmin($user)) {
             return true;
         }
 
@@ -62,7 +62,7 @@ class ArchiveAccess
 
     public static function scope(Builder $query, User $user, string $alias = 'a'): Builder
     {
-        if (RolePermissions::isSuperAdmin($user)) {
+        if (RolePermissions::isAdmin($user)) {
             return $query;
         }
 

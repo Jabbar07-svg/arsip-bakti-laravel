@@ -9,7 +9,7 @@ class DispatchRetentionReminders extends Command
 {
     protected $signature = 'retention:dispatch-reminders';
 
-    protected $description = 'Create due retention reminders and notify active Super Admins';
+    protected $description = 'Create due retention reminders and notify the active Admin';
 
     public function handle(RetentionReminderDispatcher $dispatcher): int
     {

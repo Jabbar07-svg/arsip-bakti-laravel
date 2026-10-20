@@ -4,7 +4,7 @@
 
 @section('content')
 <main class="page">
-    <div class="page-heading-row"><div><div class="eyebrow">Manajemen Sirkulasi</div><h1>Persetujuan Peminjaman</h1><p class="page-description">Periksa permintaan Customer. Persetujuan akan membuat transaksi dan mengubah status arsip secara atomik.</p></div><span class="count-badge">{{ number_format($pendingCount, 0, ',', '.') }} menunggu</span></div>
+    <div class="page-heading-row"><div><div class="eyebrow">Manajemen Sirkulasi</div><h1>Persetujuan Peminjaman</h1><p class="page-description">Periksa permintaan peminjaman Pegawai. Persetujuan akan membuat transaksi dan mengubah status arsip secara atomik.</p></div><span class="count-badge">{{ number_format($pendingCount, 0, ',', '.') }} menunggu</span></div>
     @if (session('success'))<div class="notice-success" role="status">{{ session('success') }}</div>@endif
     <section class="panel approval-list">
         @forelse ($requests as $item)

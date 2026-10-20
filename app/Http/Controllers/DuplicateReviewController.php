@@ -83,9 +83,9 @@ class DuplicateReviewController extends Controller
             abort_if($archive === null || $candidate === null, 404);
             abort_unless(
                 ($archive->classification !== 'Dokumen Rahasia' && $candidate->classification !== 'Dokumen Rahasia')
-                    || RolePermissions::isSuperAdmin($user),
+                    || RolePermissions::isAdmin($user),
                 403,
-                'Hanya Super Admin yang dapat memverifikasi pasangan yang memuat arsip Dokumen Rahasia.'
+                'Hanya Admin yang dapat memverifikasi pasangan yang memuat arsip Dokumen Rahasia.'
             );
             abort_unless(ArchiveAccess::canView($user, $archive) && ArchiveAccess::canView($user, $candidate), 403);
             DB::table('duplicate_reviews')->where('id', $review)->update([

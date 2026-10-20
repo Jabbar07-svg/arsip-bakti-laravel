@@ -8,7 +8,7 @@
         <div>
             <div class="eyebrow">Audit Sistem</div>
             <h1>Riwayat Aktivitas</h1>
-            <p class="page-description">Cari aktivitas terbaru pengguna dan perubahan yang tercatat pada arsip.</p>
+            <p class="page-description">{{ auth()->user()->role === 'Pegawai' ? 'Lihat aktivitas arsip dan perubahan status transaksi yang terkait dengan akun Anda.' : 'Cari aktivitas terbaru pengguna dan perubahan yang tercatat pada arsip.' }}</p>
         </div>
     </div>
 

@@ -116,10 +116,10 @@ class ArchiveController extends Controller
     {
         $this->authorizeManagement($request->user());
         $validated = $this->validatedArchiveData($request);
-        $uploadPath = null;
+        $uploadPaths = [];
 
         try {
-            $archiveId = DB::transaction(function () use ($request, $validated, &$uploadPath): int {
+            $archiveId = DB::transaction(function () use ($request, $validated, &$uploadPaths): int {
                 $date = Carbon::createFromFormat('!Y-m-d', $validated['tanggal_masuk']);
                 $year = (int) $date->format('Y');
                 $month = (int) $date->format('n');
@@ -147,12 +147,12 @@ class ArchiveController extends Controller
                 ]);
 
                 $this->addAudit($archiveId, $request->user()->id, 'Menambahkan arsip', 'QR ID: '.$qrCode);
-                $this->storeAttachment($request->file('file'), $archiveId, $request->user()->id, $uploadPath);
+                $this->storeAttachments($validated['files'], $archiveId, $request->user()->id, $uploadPaths);
 
                 return $archiveId;
             });
         } catch (Throwable $exception) {
-            $this->removeStoredFile($uploadPath);
+            $this->removeStoredFiles($uploadPaths);
             throw $exception;
         }
 
@@ -184,7 +184,37 @@ class ArchiveController extends Controller
 
         $history = DB::table('riwayat_arsip as h')
             ->join('users as u', 'u.id', '=', 'h.user_id')
-            ->where('h.arsip_id', $archive)
+            ->where('h.arsip_id', $archive);
+        if ($request->user()->role === 'Pegawai') {
+            $employee = $request->user();
+            $returnedLoanDetails = DB::table('peminjaman')
+                ->where('arsip_id', $archive)
+                ->where('status', 'Dikembalikan')
+                ->where(function (Builder $owned) use ($employee): void {
+                    $owned
+                        ->where('created_by', $employee->id)
+                        ->orWhereIn('id', DB::table('loan_requests')
+                            ->select('loan_id')
+                            ->where('user_id', $employee->id)
+                            ->where('status', 'Disetujui')
+                            ->whereNotNull('loan_id'));
+                })
+                ->pluck('id')
+                ->map(static fn ($id): string => 'Transaksi peminjaman #'.$id)
+                ->all();
+
+            $history->where(function (Builder $ownedActivity) use ($employee, $returnedLoanDetails): void {
+                $ownedActivity->where('h.user_id', $employee->id);
+                if ($returnedLoanDetails !== []) {
+                    $ownedActivity->orWhere(function (Builder $returnActivity) use ($returnedLoanDetails): void {
+                        $returnActivity
+                            ->where('h.aktivitas', 'Mengembalikan berkas')
+                            ->whereIn('h.keterangan', $returnedLoanDetails);
+                    });
+                }
+            });
+        }
+        $history = $history
             ->orderByDesc('h.id')
             ->select(['h.aktivitas', 'h.keterangan', 'h.created_at', 'u.nama'])
             ->get();
@@ -192,10 +222,19 @@ class ArchiveController extends Controller
             ->where('arsip_id', $archive)
             ->orderByDesc('id')
             ->get();
-        $lastLoan = DB::table('peminjaman')
-            ->where('arsip_id', $archive)
-            ->orderByDesc('id')
-            ->first();
+        $loanQuery = DB::table('peminjaman')->where('arsip_id', $archive);
+        if ($request->user()->role === 'Pegawai') {
+            $loanQuery->where(function (Builder $owned) use ($request): void {
+                $owned
+                    ->where('created_by', $request->user()->id)
+                    ->orWhereIn('id', DB::table('loan_requests')
+                        ->select('loan_id')
+                        ->where('user_id', $request->user()->id)
+                        ->where('status', 'Disetujui')
+                        ->whereNotNull('loan_id'));
+            });
+        }
+        $lastLoan = $loanQuery->orderByDesc('id')->first();
 
         return view('archives.show', [
             'archive' => $record,
@@ -206,6 +245,9 @@ class ArchiveController extends Controller
             'canRequestLoan' => RolePermissions::allows($request->user(), RolePermissions::LOANS_REQUEST)
                 && $record->classification === 'Publik'
                 && $record->status === 'Tersimpan',
+            'canBorrowWithoutQr' => $request->user()->role === 'Pegawai'
+                && $record->status === 'Tersimpan'
+                && ArchiveAccess::canView($request->user(), $record),
             'legacyUrl' => rtrim((string) config('app.legacy_url'), '/'),
         ]);
     }
@@ -225,14 +267,32 @@ class ArchiveController extends Controller
     {
         $this->authorizeManagement($request->user());
         $validated = $this->validatedArchiveData($request);
-        $uploadPath = null;
+        $uploadPaths = [];
 
         try {
-            DB::transaction(function () use ($request, $validated, $archive, &$uploadPath): void {
+            DB::transaction(function () use ($request, $validated, $archive, &$uploadPaths): void {
                 $old = DB::table('arsip')->where('id', $archive)->lockForUpdate()->first();
 
                 abort_if($old === null, 404);
                 abort_unless(ArchiveAccess::canView($request->user(), $old), 403);
+
+                $changeDetails = ['Perubahan data arsip: '.$old->nama_berkas.' → '.$validated['nama_berkas']];
+                if ((int) $old->lokasi_id !== (int) $validated['lokasi_id']) {
+                    $locations = DB::table('lokasi')
+                        ->whereIn('id', [$old->lokasi_id, $validated['lokasi_id']])
+                        ->get(['id', 'gudang', 'rak', 'lemari', 'box'])
+                        ->keyBy('id');
+                    $oldLocation = $locations->get($old->lokasi_id);
+                    $newLocation = $locations->get($validated['lokasi_id']);
+                    abort_if($oldLocation === null || $newLocation === null, 409, 'Lokasi arsip tidak dapat diverifikasi.');
+                    $formatLocation = static fn (object $location): string => implode(' / ', array_filter([
+                        $location->gudang,
+                        $location->rak,
+                        $location->lemari,
+                        $location->box,
+                    ]));
+                    $changeDetails[] = 'Pemindahan lokasi: '.$formatLocation($oldLocation).' → '.$formatLocation($newLocation);
+                }
 
                 $date = Carbon::createFromFormat('!Y-m-d', $validated['tanggal_masuk']);
                 DB::table('arsip')->where('id', $archive)->update([
@@ -256,12 +316,12 @@ class ArchiveController extends Controller
                     $archive,
                     $request->user()->id,
                     'Mengubah arsip',
-                    'Perubahan data arsip: '.$old->nama_berkas.' → '.$validated['nama_berkas']
+                    implode('; ', $changeDetails)
                 );
-                $this->storeAttachment($request->file('file'), $archive, $request->user()->id, $uploadPath);
+                $this->storeAttachments($validated['files'], $archive, $request->user()->id, $uploadPaths);
             });
         } catch (Throwable $exception) {
-            $this->removeStoredFile($uploadPath);
+            $this->removeStoredFiles($uploadPaths);
             throw $exception;
         }
 
@@ -373,7 +433,7 @@ class ArchiveController extends Controller
 
     private function validatedArchiveData(Request $request): array
     {
-        if ($request->user()->role === 'Admin') {
+        if (RolePermissions::isDivisionScoped($request->user())) {
             $request->merge(['division' => $request->user()->division]);
         }
 
@@ -397,22 +457,35 @@ class ArchiveController extends Controller
             'division' => ['nullable', 'required_if:classification,Internal Divisi', 'string', 'max:150'],
             'keterangan' => ['nullable', 'string'],
             'file' => ['nullable', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx'],
+            'files' => ['nullable', 'array'],
+            'files.*' => ['file', 'max:10240', 'mimes:pdf,jpg,jpeg,png,doc,docx,xls,xlsx'],
         ], [
             'kategori_id.exists' => 'Pilih kategori yang masih aktif.',
             'lokasi_id.exists' => 'Pilih lokasi yang masih aktif.',
             'division.required_if' => 'Divisi wajib diisi untuk klasifikasi Internal Divisi.',
             'file.max' => 'Ukuran file maksimal 10 MB.',
             'file.mimes' => 'Tipe file tidak diizinkan. Gunakan PDF, JPG, PNG, DOC, DOCX, XLS, atau XLSX.',
+            'files.*.max' => 'Ukuran setiap file maksimal 10 MB.',
+            'files.*.mimes' => 'Tipe file tidak diizinkan. Gunakan PDF, JPG, PNG, DOC, DOCX, XLS, atau XLSX.',
         ]);
+
+        $uploads = $request->file('files', []);
+        $validated['files'] = is_array($uploads) ? array_values($uploads) : [];
+        if ($request->file('file') instanceof UploadedFile) {
+            $validated['files'][] = $request->file('file');
+        }
 
         if (
             $validated['classification'] === 'Dokumen Rahasia'
             && ! RolePermissions::allows($request->user(), RolePermissions::ARCHIVES_MANAGE_CONFIDENTIAL)
         ) {
-            abort(403, 'Hanya Super Admin yang dapat mengatur arsip rahasia.');
+            abort(403, 'Hanya Admin yang dapat mengatur arsip rahasia.');
         }
 
-        if ($validated['classification'] !== 'Internal Divisi' && $request->user()->role !== 'Admin') {
+        if (
+            $validated['classification'] !== 'Internal Divisi'
+            && ! in_array($request->user()->role, ['Admin', 'Petugas Arsip'], true)
+        ) {
             $validated['division'] = null;
         }
 
@@ -430,44 +503,47 @@ class ArchiveController extends Controller
         ]);
     }
 
-    private function storeAttachment(?UploadedFile $file, int $archiveId, int $userId, ?string &$storedPath): void
+    private function storeAttachments(array $files, int $archiveId, int $userId, array &$storedPaths): void
     {
-        if ($file === null) {
-            return;
-        }
+        foreach ($files as $file) {
+            if (! $file instanceof UploadedFile) {
+                continue;
+            }
 
-        $extension = strtolower((string) $file->guessExtension());
-        if (! in_array($extension, ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'], true)) {
-            throw ValidationException::withMessages([
-                'file' => 'Tipe file tidak diizinkan. Periksa kembali format dokumen.',
+            $extension = strtolower((string) $file->guessExtension());
+            if (! in_array($extension, ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'], true)) {
+                throw ValidationException::withMessages([
+                    'files' => 'Tipe file tidak diizinkan. Periksa kembali format dokumen.',
+                ]);
+            }
+
+            $storedPath = $file->storeAs(
+                'arsip',
+                bin2hex(random_bytes(12)).'.'.$extension,
+                'legacy_uploads'
+            );
+
+            if ($storedPath === false) {
+                throw new RuntimeException('File tidak dapat disimpan.');
+            }
+
+            $storedPaths[] = $storedPath;
+            $originalName = basename(str_replace('\\', '/', $file->getClientOriginalName()));
+            $originalName = str_replace(["\r", "\n"], '', $originalName);
+            DB::table('arsip_files')->insert([
+                'arsip_id' => $archiveId,
+                'nama_file' => $originalName,
+                'file_path' => 'uploads/'.str_replace('\\', '/', $storedPath),
+                'tipe_file' => $file->getMimeType() ?: 'application/octet-stream',
+                'uploaded_by' => $userId,
+                'created_at' => now(),
             ]);
         }
-
-        $storedPath = $file->storeAs(
-            'arsip',
-            bin2hex(random_bytes(12)).'.'.$extension,
-            'legacy_uploads'
-        );
-
-        if ($storedPath === false) {
-            throw new RuntimeException('File tidak dapat disimpan.');
-        }
-
-        $originalName = basename(str_replace('\\', '/', $file->getClientOriginalName()));
-        $originalName = str_replace(["\r", "\n"], '', $originalName);
-        DB::table('arsip_files')->insert([
-            'arsip_id' => $archiveId,
-            'nama_file' => $originalName,
-            'file_path' => 'uploads/'.str_replace('\\', '/', $storedPath),
-            'tipe_file' => $file->getMimeType() ?: 'application/octet-stream',
-            'uploaded_by' => $userId,
-            'created_at' => now(),
-        ]);
     }
 
-    private function removeStoredFile(?string $path): void
+    private function removeStoredFiles(array $paths): void
     {
-        if ($path !== null) {
+        foreach ($paths as $path) {
             Storage::disk('legacy_uploads')->delete($path);
         }
     }

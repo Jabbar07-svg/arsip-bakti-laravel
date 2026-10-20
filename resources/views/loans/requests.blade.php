@@ -4,7 +4,7 @@
 
 @section('content')
 <main class="page">
-    <div class="page-heading-row"><div><div class="eyebrow">Portal Customer</div><h1>Permintaan Peminjaman Saya</h1><p class="page-description">Lihat status permintaan arsip publik yang Anda ajukan.</p></div><a class="button" href="{{ route('archives.index') }}">Cari arsip publik</a></div>
+    <div class="page-heading-row"><div><div class="eyebrow">{{ auth()->user()->role === 'Pegawai' ? 'Ruang kerja Pegawai' : 'Portal layanan' }}</div><h1>Permintaan Peminjaman Saya</h1><p class="page-description">Lihat status permintaan arsip publik yang Anda ajukan.</p></div><a class="button" href="{{ route('archives.index') }}">Cari arsip publik</a></div>
     @if (session('success'))<div class="notice-success" role="status">{{ session('success') }}</div>@endif
     <section class="panel request-list">
         @forelse ($requests as $item)
